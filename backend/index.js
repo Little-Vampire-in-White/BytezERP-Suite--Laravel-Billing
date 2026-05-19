@@ -17,6 +17,19 @@ const PORT = process.env.PORT || 5000;
 app.use(cors());
 app.use(express.json());
 
+// Promisified Database Helpers
+const dbGet = (sql, params = []) => new Promise((res, rej) => {
+    db.get(sql, params, (err, row) => err ? rej(err) : res(row));
+});
+
+const dbAll = (sql, params = []) => new Promise((res, rej) => {
+    db.all(sql, params, (err, rows) => err ? rej(err) : res(rows));
+});
+
+const dbRun = (sql, params = []) => new Promise((res, rej) => {
+    db.run(sql, params, function(err) { err ? rej(err) : res(this); });
+});
+
 // Database Connection
 // If DB_PATH isn't set, default to a local SQLite file named ./database.sqlite
 const dbPath = path.resolve(__dirname, process.env.DB_PATH || './database.sqlite'); // Use DB_PATH from env
@@ -254,38 +267,33 @@ app.delete('/api/clients/:id', (req, res) => {
 /**
  * Dashboard Statistics (Bridge for Bytez-ERP)
  */
-app.get('/api/dashboard', (req, res) => {
-    const stats = {
-        total_clients: 0,
-        total_projects: 0,
-        total_tasks: 0,
-        total_users: 0
-    };
+app.get('/api/dashboard', async (req, res) => {
+    try {
+        const [clients, projects, tasks, users] = await Promise.all([
+            dbGet("SELECT COUNT(*) as count FROM clients"),
+            dbGet("SELECT COUNT(*) as count FROM projects"),
+            dbGet("SELECT COUNT(*) as count FROM tasks"),
+            dbGet("SELECT COUNT(*) as count FROM users")
+        ]);
 
-    // Sequential count queries (keeping existing callback style)
-    db.get("SELECT COUNT(*) as count FROM clients", (err, cRow) => {
-        if (!err) stats.total_clients = cRow.count;
-        db.get("SELECT COUNT(*) as count FROM projects", (err, pRow) => {
-            if (!err) stats.total_projects = pRow.count;
-            db.get("SELECT COUNT(*) as count FROM tasks", (err, tRow) => {
-                if (!err) stats.total_tasks = tRow.count;
-                db.get("SELECT COUNT(*) as count FROM users", (err, uRow) => {
-                    if (!err) stats.total_users = uRow.count;
-                    
-                    res.json({
-                        status: 'success',
-                        data: {
-                            stats: stats,
-                            recent_projects: [], // Logic for recents can be added later
-                            recent_tasks: [],
-                            task_chart: { todo: 0, in_progress: 0, completed: 0 },
-                            project_chart: { pending: 0, in_progress: 0, completed: 0 }
-                        }
-                    });
-                });
-            });
+        res.json({
+            status: 'success',
+            data: {
+                stats: {
+                    total_clients: clients.count,
+                    total_projects: projects.count,
+                    total_tasks: tasks.count,
+                    total_users: users.count
+                },
+                recent_projects: [],
+                recent_tasks: [],
+                task_chart: { todo: 0, in_progress: 0, completed: 0 },
+                project_chart: { pending: 0, in_progress: 0, completed: 0 }
+            }
         });
-    });
+    } catch (err) {
+        res.status(500).json({ status: 'error', message: err.message });
+    }
 });
 
 app.get('/', (req, res) => {
