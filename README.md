@@ -2,6 +2,11 @@
 
 A comprehensive ERP and Billing solution consisting of a Desktop application, a Node.js Bridge API, and dual PHP backends (Core PHP and Laravel).
 
+## 📥 Download & Install
+
+**Looking for the installer?**  
+Download the latest Windows executable from the [Releases](https://github.com/Little-Vampire-in-White/BytezERP-Suite--Laravel-Billing/releases) section. Just download, install, and run!
+
 ## 🏗️ Project Architecture
 
 This suite is composed of four main components:
@@ -34,13 +39,16 @@ Create a `.env` file in the `desktop/` directory. You can use the following temp
 # PHP Configuration
 PHP_BINARY=php # Or path to your php.exe (e.g., C:\xampp\php\php.exe)
 
+# Laravel APP_KEY (Generate with 'php artisan key:generate' in Laravel folder)
+APP_KEY=base64:YOUR_APP_KEY_HERE
+
 # Ports
 BYTEZ_ERP_PORT=8080
 LARAVEL_INVOICE_PORT=8000
 NODE_BACKEND_PORT=5000
 
 # Database
-NODE_BACKEND_DB_PATH=../laravel-invoice-billing-system/database/database.sqlite
+# NODE_BACKEND_DB_PATH is now managed automatically by Electron to a persistent location.
 ```
 
 ### 3. Install Dependencies
