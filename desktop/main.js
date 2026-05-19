@@ -72,6 +72,30 @@ function checkServerReady(port, serviceName, callback, timeout = 20000) {
     }, 500);
 }
 
+function runMigration(phpBinary, laravelDir, sharedDbPath) {
+    return new Promise((resolve) => {
+        logToFile('Running database migrations...');
+        const migration = spawn(phpBinary, ['artisan', 'migrate', '--force'], {
+            cwd: laravelDir,
+            env: { 
+                ...process.env,
+                DB_CONNECTION: 'sqlite',
+                DB_DATABASE: sharedDbPath,
+                APP_ENV: 'local'
+            },
+            shell: true
+        });
+
+        migration.stdout.on('data', (data) => logToFile(data, 'Laravel-Migrate'));
+        migration.stderr.on('data', (data) => logToFile(data, 'Laravel-Migrate-ERR'));
+        
+        migration.on('close', (code) => {
+            logToFile(`Migration process exited with code ${code}`);
+            resolve();
+        });
+    });
+}
+
 function createWindow() {
     // 1. Start the PHP Built-in Server for Bytez-ERP
     const erpCwd = getServicePath(process.env.BYTEZ_ERP_PATH, '../bytez-erp');
@@ -82,46 +106,56 @@ function createWindow() {
         dialog.showErrorBox("Missing Folder", `Bytez-ERP folder not found at: ${erpCwd}`);
     }
 
-    phpServer = spawn(phpBinary, [ 
-        '-S', `127.0.0.1:${process.env.BYTEZ_ERP_PORT || 8080}`, 
-        '-t', '.',
-        'index.php' // Optional: Use index.php as a router if your framework requires it
-    ], {
-        cwd: erpCwd,
-        env: { ...process.env },
-        shell: true, // Helps finding the binary on Windows
-        stdio: 'pipe' // Use 'pipe' so we can capture output and add prefixes
-    });
-    phpServer.on('error', (err) => {
-        if (app.isPackaged) {
-            dialog.showErrorBox("PHP Error", `Failed to start Bytez-ERP PHP server.\n\nCommand: ${phpBinary}\nError: ${err.message}\n\nPlease ensure PHP is installed and in your system PATH, or define PHP_BINARY in your .env file.`);
+    const laravelDir = getServicePath(process.env.LARAVEL_INVOICE_PATH, '../laravel-invoice-billing-system');
+    const userDataPath = app.getPath('userData');
+    const sharedDbPath = path.join(userDataPath, 'database.sqlite');
+
+    // Ensure shared DB exists
+    if (!fs.existsSync(sharedDbPath)) {
+        const initialDbPath = path.join(laravelDir, 'database', 'database.sqlite');
+        if (fs.existsSync(initialDbPath)) {
+            fs.copyFileSync(initialDbPath, sharedDbPath);
+            logToFile('Initialized persistent database.');
         }
+    }
+
+    // Shared environment for all processes
+    const sharedEnv = {
+        ...process.env,
+        DB_CONNECTION: 'sqlite',
+        DB_DATABASE: sharedDbPath,
+        DB_PATH: sharedDbPath,
+        APP_DEBUG: 'true',
+        APP_ENV: 'local'
+    };
+
+    // Start Bytez-ERP with shared DB env
+    phpServer = spawn(phpBinary, ['-S', `127.0.0.1:${process.env.BYTEZ_ERP_PORT || 8080}`, '-t', '.', 'index.php'], {
+        cwd: erpCwd,
+        env: sharedEnv,
+        shell: true,
+        stdio: 'pipe'
     });
     phpServer.stdout.on('data', (data) => logToFile(data, 'Bytez-ERP-PHP'));
-    phpServer.stderr.on('data', (data) => logToFile(data, 'Bytez-ERP-PHP-ERR'));
 
-    // Start the PHP Built-in Server for Laravel Invoice System
-    laravelPhpServer = spawn(phpBinary, [
-        'artisan', 'serve',
-        `--port=${process.env.LARAVEL_INVOICE_PORT || 8000}`,
-        '--host=127.0.0.1'
-    ], {
-        cwd: getServicePath(process.env.LARAVEL_INVOICE_PATH, '../laravel-invoice-billing-system'),
-        env: { ...process.env },
-        shell: true,
-        stdio: 'pipe' // Use 'pipe' so we can capture output and add prefixes
+    // Run migration THEN start Laravel and Node
+    runMigration(phpBinary, laravelDir, sharedDbPath).then(() => {
+        laravelPhpServer = spawn(phpBinary, [
+            'artisan', 'serve',
+            `--port=${process.env.LARAVEL_INVOICE_PORT || 8000}`,
+            '--host=127.0.0.1'
+        ], {
+            cwd: laravelDir,
+            env: sharedEnv,
+            shell: true,
+            stdio: 'pipe'
+        });
+        laravelPhpServer.stdout.on('data', (data) => logToFile(data, 'Laravel-PHP'));
     });
-    laravelPhpServer.on('error', (err) => {
-        console.error('Failed to start Laravel PHP server:', err);
-    });
-    laravelPhpServer.stdout.on('data', (data) => console.log(`[Laravel PHP] ${data}`));
-    laravelPhpServer.stderr.on('data', (data) => console.error(`[Laravel PHP ERR] ${data}`));
 
     // Start the Node.js Bridge API
     const backendDir = getServicePath(process.env.NODE_BACKEND_PATH, '../backend');
     const backendScript = path.join(backendDir, 'index.js');
-
-    console.log(`[Main] Attempting to start backend from: ${backendScript}`);
 
     if (!fs.existsSync(backendDir)) {
         dialog.showErrorBox("Missing Backend Folder", `Node.js backend folder not found at: ${backendDir}`);
@@ -136,11 +170,6 @@ function createWindow() {
     const backendEnv = { ...process.env };
     if (app.isPackaged) {
         backendEnv.ELECTRON_RUN_AS_NODE = '1';
-        // If DB_PATH is an absolute path from your dev machine, it won't work in prod.
-        if (backendEnv.NODE_BACKEND_DB_PATH && path.isAbsolute(backendEnv.NODE_BACKEND_DB_PATH)) {
-            backendEnv.NODE_BACKEND_DB_PATH = './database.sqlite';
-        }
-
         // Tell the backend where to find the bundled modules
         const appPath = app.getAppPath();
         const asarModules = path.join(appPath, 'node_modules');
@@ -154,7 +183,7 @@ function createWindow() {
         env: {
             ...backendEnv,
             PORT: backendEnv.NODE_BACKEND_PORT || 5000,
-            DB_PATH: backendEnv.NODE_BACKEND_DB_PATH || './database.sqlite'
+            DB_PATH: sharedDbPath // Force Node to use the Laravel DB file
         },
         stdio: 'pipe' // Simplifies child process management in some Electron versions
     });

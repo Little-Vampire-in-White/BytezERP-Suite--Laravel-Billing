@@ -32,7 +32,10 @@ const dbRun = (sql, params = []) => new Promise((res, rej) => {
 
 // Database Connection
 // If DB_PATH isn't set, default to a local SQLite file named ./database.sqlite
-const dbPath = path.resolve(__dirname, process.env.DB_PATH || './database.sqlite'); // Use DB_PATH from env
+const dbPath = process.env.DB_PATH && path.isAbsolute(process.env.DB_PATH) 
+    ? process.env.DB_PATH 
+    : path.resolve(__dirname, process.env.DB_PATH || './database.sqlite');
+
 
 const db = new sqlite3.Database(dbPath, (err) => {
     if (err) {
@@ -58,13 +61,15 @@ function initializeDatabase() {
 
         db.run(`CREATE TABLE IF NOT EXISTS clients (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
+            company TEXT,
             name TEXT,
             email TEXT,
             phone TEXT,
             address TEXT,
             industry TEXT,
-            contact_name TEXT,
-            status TEXT DEFAULT 'active'
+            status TEXT DEFAULT 'active',
+            created_at DATETIME,
+            updated_at DATETIME
         )`);
 
         db.run(`CREATE TABLE IF NOT EXISTS projects (
@@ -108,14 +113,20 @@ function initializeDatabase() {
         // Migration: Ensure 'industry', 'status', and 'contact_name' columns exist in clients table
         db.all("PRAGMA table_info(clients)", (err, columns) => {
             if (!err && columns) {
+                if (!columns.some(col => col.name === 'company')) {
+                    db.run("ALTER TABLE clients ADD COLUMN company TEXT");
+                }
                 if (!columns.some(col => col.name === 'industry')) {
                     db.run("ALTER TABLE clients ADD COLUMN industry TEXT");
                 }
                 if (!columns.some(col => col.name === 'status')) {
                     db.run("ALTER TABLE clients ADD COLUMN status TEXT DEFAULT 'active'");
                 }
-                if (!columns.some(col => col.name === 'contact_name')) {
-                    db.run("ALTER TABLE clients ADD COLUMN contact_name TEXT");
+                if (!columns.some(col => col.name === 'created_at')) {
+                    db.run("ALTER TABLE clients ADD COLUMN created_at DATETIME");
+                }
+                if (!columns.some(col => col.name === 'updated_at')) {
+                    db.run("ALTER TABLE clients ADD COLUMN updated_at DATETIME");
                 }
             }
         });
@@ -206,7 +217,9 @@ app.get('/api/invoices/:id', (req, res) => {
  * Get all clients (Shared with Bytez-ERP)
  */
 app.get('/api/clients', (req, res) => {
-    const sql = `SELECT * FROM clients ORDER BY name ASC`;
+    // Aliasing company_name as name and name as contact_name to maintain
+    // compatibility with the Bytez-ERP PHP frontend while using Laravel's schema.
+    const sql = `SELECT *, company as name, name as contact_name FROM clients ORDER BY company ASC`;
     
     db.all(sql, [], (err, rows) => {
         if (err) {
@@ -223,7 +236,7 @@ app.get('/api/clients', (req, res) => {
  * Get single client
  */
 app.get('/api/clients/:id', (req, res) => {
-    const sql = `SELECT * FROM clients WHERE id = ?`;
+    const sql = `SELECT *, company as name, name as contact_name FROM clients WHERE id = ?`;
     db.get(sql, [req.params.id], (err, row) => {
         if (err) return res.status(500).json({ status: 'error', message: err.message });
         if (!row) {
@@ -238,8 +251,10 @@ app.get('/api/clients/:id', (req, res) => {
  */
 app.post('/api/clients', (req, res) => {
     const { company_name, contact_name, email, phone, address, industry, status } = req.body;
-    const sql = `INSERT INTO clients (name, contact_name, email, phone, address, industry, status) VALUES (?, ?, ?, ?, ?, ?, ?)`;
-    db.run(sql, [company_name || req.body.name, contact_name, email, phone, address, industry, status], function(err) {
+    const now = new Date().toISOString().slice(0, 19).replace('T', ' ');
+    // Use 'company' for business name and 'name' for contact person to match Laravel
+    const sql = `INSERT INTO clients (company, name, email, phone, address, industry, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+    db.run(sql, [company_name || req.body.company || req.body.name, contact_name || req.body.name, email, phone, address, industry, status, now, now], function(err) {
         if (err) return res.status(500).json({ success: false, status: 'error', message: err.message });
         res.json({ success: true, status: 'success', data: { id: this.lastID } });
     });
@@ -247,8 +262,9 @@ app.post('/api/clients', (req, res) => {
 
 app.put('/api/clients/:id', (req, res) => {
     const { company_name, contact_name, email, phone, address, industry, status } = req.body;
-    const sql = `UPDATE clients SET name = ?, contact_name = ?, email = ?, phone = ?, address = ?, industry = ?, status = ? WHERE id = ?`;
-    db.run(sql, [company_name || req.body.name, contact_name, email, phone, address, industry, status, req.params.id], function(err) {
+    const now = new Date().toISOString().slice(0, 19).replace('T', ' ');
+    const sql = `UPDATE clients SET company = ?, name = ?, email = ?, phone = ?, address = ?, industry = ?, status = ?, updated_at = ? WHERE id = ?`;
+    db.run(sql, [company_name || req.body.name, contact_name || req.body.name, email, phone, address, industry, status, now, req.params.id], function(err) {
         if (err) return res.status(500).json({ success: false, status: 'error', message: err.message });
         res.json({ success: true, status: 'success', message: 'Client updated' });
     });
