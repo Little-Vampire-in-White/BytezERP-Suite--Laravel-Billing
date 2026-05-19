@@ -1,0 +1,19 @@
+# Environment files
+.env
+.env.local
+
+# Database config
+config/database.php
+
+# Uploads
+public/uploads/*
+!public/uploads/.gitkeep
+
+# System files
+.DS_Store
+Thumbs.db
+*.log
+
+# IDE files
+.vscode/
+*.swp

@@ -1,0 +1,201 @@
+/* Custom Bootstrap Styles */
+@import "tailwindcss";
+.hover-card {
+    transition: all 0.3s ease;
+}
+
+.hover-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 0.5rem 1rem rgba(0, 0, 0, 0.15) !important;
+}
+
+/* Custom card hover effects */
+.card:hover {
+    transform: translateY(-2px);
+    transition: all 0.3s ease;
+}
+
+/* Custom button styles */
+.btn {
+    transition: all 0.3s ease;
+}
+
+/* Custom table styles */
+.table-hover tbody tr:hover {
+    background-color: rgba(0, 0, 0, 0.05);
+}
+
+/* Custom form styles */
+.form-control:focus {
+    border-color: #0d6efd;
+    box-shadow: 0 0 0 0.2rem rgba(13, 110, 253, 0.25);
+}
+
+/* Custom alert styles */
+.alert {
+    border: none;
+    border-radius: 0.5rem;
+}
+
+/* Custom navbar styles */
+.navbar-brand:hover {
+    transform: scale(1.05);
+    transition: all 0.3s ease;
+}
+
+/* Custom spacing utilities */
+.mb-section {
+    margin-bottom: 3rem;
+}
+
+/* Custom text utilities */
+.text-primary-custom {
+    color: #0d6efd !important;
+}
+
+.text-success-custom {
+    color: #198754 !important;
+}
+
+.text-warning-custom {
+    color: #ffc107 !important;
+}
+
+.text-danger-custom {
+    color: #dc3545 !important;
+}
+
+/* Enhanced Layout Styles */
+body {
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+}
+
+main {
+    flex: 1;
+}
+
+/* Better container spacing */
+.container {
+    max-width: 1200px;
+}
+
+/* Enhanced card styles */
+.card {
+    border: none;
+    border-radius: 0.75rem;
+    box-shadow: 0 0.125rem 0.25rem rgba(0, 0, 0, 0.075);
+}
+
+.card-header {
+    background-color: #f8f9fa;
+    border-bottom: 1px solid #dee2e6;
+    border-radius: 0.75rem 0.75rem 0 0 !important;
+}
+
+/* Enhanced table styles */
+.table {
+    margin-bottom: 0;
+}
+
+.table th {
+    border-top: none;
+    font-weight: 600;
+    color: #495057;
+}
+
+/* Enhanced form styles */
+.form-label {
+    font-weight: 600;
+    color: #495057;
+    margin-bottom: 0.5rem;
+}
+
+.form-control, .form-select {
+    border-radius: 0.5rem;
+    border: 1px solid #ced4da;
+    padding: 0.75rem 1rem;
+}
+
+.form-control:focus, .form-select:focus {
+    border-color: #0d6efd;
+    box-shadow: 0 0 0 0.2rem rgba(13, 110, 253, 0.25);
+}
+
+/* Enhanced button styles */
+.btn {
+    border-radius: 0.5rem;
+    font-weight: 500;
+    padding: 0.75rem 1.5rem;
+}
+
+.btn-sm {
+    padding: 0.5rem 1rem;
+}
+
+.btn-lg {
+    padding: 1rem 2rem;
+}
+
+/* Enhanced badge styles */
+.badge {
+    font-size: 0.75rem;
+    padding: 0.5rem 0.75rem;
+    border-radius: 0.5rem;
+}
+
+/* Enhanced spacing for better showcase */
+.py-section {
+    padding-top: 3rem;
+    padding-bottom: 3rem;
+}
+
+.my-section {
+    margin-top: 3rem;
+    margin-bottom: 3rem;
+}
+
+/* Enhanced shadow styles */
+.shadow-sm {
+    box-shadow: 0 0.125rem 0.25rem rgba(0, 0, 0, 0.075) !important;
+}
+
+.shadow {
+    box-shadow: 0 0.5rem 1rem rgba(0, 0, 0, 0.15) !important;
+}
+
+.shadow-lg {
+    box-shadow: 0 1rem 3rem rgba(0, 0, 0, 0.175) !important;
+}
+
+/* Enhanced navbar styles */
+.navbar {
+    padding: 1rem 0;
+}
+
+.navbar-brand {
+    font-size: 1.5rem;
+    font-weight: 700;
+}
+
+/* Enhanced footer styles */
+footer {
+    margin-top: auto;
+}
+
+/* Responsive improvements */
+@media (max-width: 768px) {
+    .container {
+        padding-left: 1rem;
+        padding-right: 1rem;
+    }
+    
+    .card-body {
+        padding: 1.5rem;
+    }
+    
+    .btn-lg {
+        padding: 0.75rem 1.5rem;
+    }
+}
