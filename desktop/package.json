@@ -1,0 +1,42 @@
+{
+  "name": "bytez-desktop",
+  "version": "1.0.0",
+  "description": "Desktop Application for Bytez ERP and Billing System",
+  "author": "Mark J",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder",
+    "postinstall": "electron-builder install-app-deps"
+  },
+  "build": {
+    "appId": "com.bytez.erp",
+    "productName": "BytezERP",
+    "directories": {
+      "output": "dist"
+    },
+    "extraResources": [
+      { "from": "../backend", "to": "backend" },
+      { "from": "../bytez-erp", "to": "bytez-erp" },
+      { "from": "../laravel-invoice-billing-system", "to": "laravel-invoice-billing-system" },
+      ".env"
+    ],
+    "asar": true,
+    "asarUnpack": [
+      "**/node_modules/sqlite3/**/*"
+    ],
+    "win": {
+      "target": "nsis"
+    }
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^17.4.2",
+    "express": "^4.21.1",
+    "sqlite3": "^5.1.7"
+  },
+  "devDependencies": {
+    "electron": "^31.0.0",
+    "electron-builder": "^26.8.1"
+  }
+}

@@ -1,0 +1,33 @@
+# Dependency directories
+node_modules/
+vendor/
+
+# Build output
+dist/
+bin/
+obj/
+public/build/
+public/storage/
+
+# Environment files (Sensitive Info)
+.env
+.env.backup
+.env.production
+
+# Databases
+*.sqlite
+*.sqlite-journal
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# IDEs and editors
+.idea/
+.vscode/
+*.sublime-project
+*.sublime-workspace
+
+# Laravel specific
+/storage/*.key
+/auth.json
