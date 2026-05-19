@@ -16,6 +16,22 @@ let phpServer; // For Bytez-ERP (Core PHP)
 let laravelPhpServer; // For Laravel Invoice System
 let nodeBackend; // For Node.js Bridge API
 
+// Centralized Logging Utility for Production
+const logFile = path.join(app.getPath('userData'), 'app-logs.txt');
+const logToFile = (data, prefix = 'INFO') => {
+    const message = `[${new Date().toISOString()}] [${prefix}] ${data}\n`;
+    fs.appendFileSync(logFile, message);
+    if (!app.isPackaged) console.log(message.trim());
+};
+
+logToFile('--- Application Starting ---');
+logToFile(`Log file location: ${logFile}`);
+
+app.on('certificate-error', (event, webContents, url, error, certificate, callback) => {
+    event.preventDefault();
+    callback(true);
+});
+
 // Helper to resolve paths for external services correctly in both dev and prod
 const getServicePath = (envPath, defaultRelPath) => {
     if (app.isPackaged) {
@@ -36,7 +52,7 @@ function checkServerReady(port, serviceName, callback, timeout = 20000) {
     const interval = setInterval(() => {
         if (Date.now() - startTime > timeout) {
             clearInterval(interval);
-            console.error(`Timeout: ${serviceName} on port ${port} failed to start.`);
+            logToFile(`${serviceName} on port ${port} failed to start.`, 'ERROR');
             dialog.showErrorBox("Startup Timeout", 
                 `The ${serviceName} on port ${port} failed to respond within ${timeout/1000} seconds.\n\n` +
                 `Tip: Ensure no other service is using this port and that your antivirus isn't blocking the application.`
@@ -81,8 +97,8 @@ function createWindow() {
             dialog.showErrorBox("PHP Error", `Failed to start Bytez-ERP PHP server.\n\nCommand: ${phpBinary}\nError: ${err.message}\n\nPlease ensure PHP is installed and in your system PATH, or define PHP_BINARY in your .env file.`);
         }
     });
-    phpServer.stdout.on('data', (data) => console.log(`[Bytez-ERP PHP] ${data}`));
-    phpServer.stderr.on('data', (data) => console.error(`[Bytez-ERP PHP ERR] ${data}`));
+    phpServer.stdout.on('data', (data) => logToFile(data, 'Bytez-ERP-PHP'));
+    phpServer.stderr.on('data', (data) => logToFile(data, 'Bytez-ERP-PHP-ERR'));
 
     // Start the PHP Built-in Server for Laravel Invoice System
     laravelPhpServer = spawn(phpBinary, [
@@ -143,10 +159,10 @@ function createWindow() {
         stdio: 'pipe' // Simplifies child process management in some Electron versions
     });
 
-    nodeBackend.stdout.on('data', (data) => console.log(`[Node Backend] ${data}`));
+    nodeBackend.stdout.on('data', (data) => logToFile(data, 'Node-Backend'));
     nodeBackend.stderr.on('data', (data) => {
         const errString = data.toString();
-        console.error(`[Node Backend ERR] ${errString}`);
+        logToFile(errString, 'Node-Backend-ERR');
         // Show actual crash errors in a dialog so you can debug production
         if (app.isPackaged && (errString.includes('Error:') || errString.includes('Exception'))) {
             dialog.showErrorBox("Backend Startup Error", errString);
