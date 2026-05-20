@@ -116,6 +116,9 @@ function initializeDatabase() {
                 if (!columns.some(col => col.name === 'company')) {
                     db.run("ALTER TABLE clients ADD COLUMN company TEXT");
                 }
+                if (!columns.some(col => col.name === 'user_id')) {
+                    db.run("ALTER TABLE clients ADD COLUMN user_id INTEGER DEFAULT 1");
+                }
                 if (!columns.some(col => col.name === 'industry')) {
                     db.run("ALTER TABLE clients ADD COLUMN industry TEXT");
                 }
@@ -252,8 +255,8 @@ app.get('/api/clients/:id', (req, res) => {
 app.post('/api/clients', (req, res) => {
     const { company_name, contact_name, email, phone, address, industry, status } = req.body;
     const now = new Date().toISOString().slice(0, 19).replace('T', ' ');
-    // Use 'company' for business name and 'name' for contact person to match Laravel
-    const sql = `INSERT INTO clients (company, name, email, phone, address, industry, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+    // Assign user_id = 1 (Admin) by default so Laravel "User-Only" logic sees these clients
+    const sql = `INSERT INTO clients (company, name, email, phone, address, industry, status, user_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`;
     db.run(sql, [company_name || req.body.company || req.body.name, contact_name || req.body.name, email, phone, address, industry, status, now, now], function(err) {
         if (err) return res.status(500).json({ success: false, status: 'error', message: err.message });
         res.json({ success: true, status: 'success', data: { id: this.lastID } });
@@ -261,10 +264,10 @@ app.post('/api/clients', (req, res) => {
 });
 
 app.put('/api/clients/:id', (req, res) => {
-    const { company_name, contact_name, email, phone, address, industry, status } = req.body;
+    const { company_name, company, contact_name, email, phone, address, industry, status } = req.body;
     const now = new Date().toISOString().slice(0, 19).replace('T', ' ');
     const sql = `UPDATE clients SET company = ?, name = ?, email = ?, phone = ?, address = ?, industry = ?, status = ?, updated_at = ? WHERE id = ?`;
-    db.run(sql, [company_name || req.body.name, contact_name || req.body.name, email, phone, address, industry, status, now, req.params.id], function(err) {
+    db.run(sql, [company || company_name || req.body.name, contact_name || req.body.name, email, phone, address, industry, status, now, req.params.id], function(err) {
         if (err) return res.status(500).json({ success: false, status: 'error', message: err.message });
         res.json({ success: true, status: 'success', message: 'Client updated' });
     });
