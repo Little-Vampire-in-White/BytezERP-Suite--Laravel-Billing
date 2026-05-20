@@ -77,16 +77,6 @@ cd desktop
 npm start
 ```
 
-## 📦 Building for Production (EXE)
-
-To package the entire suite into a single Windows executable:
-
-```bash
-cd desktop
-npm run dist
-```
-The installer will be generated in the `desktop/dist` folder.
-
 ## 📝 Logging
 In production, the application captures all service logs (PHP, Node, Electron) into a file for debugging:
 `%AppData%\bytez-desktop\app-logs.txt`
