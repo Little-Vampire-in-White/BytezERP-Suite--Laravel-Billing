@@ -4,23 +4,21 @@ use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\ClientController;
 use App\Http\Controllers\InvoiceController;
 use App\Http\Controllers\UserController;
+use App\Http\Controllers\Api\SyncController;
 
 // Home page - Dashboard
 Route::get('/', function () {
     // Fetch statistics to prevent "Undefined variable" 500 errors in the dashboard view
-    $totalClients = \Illuminate\Support\Facades\Schema::hasTable('clients') ? \App\Models\Client::count() : 0;
-    $totalInvoices = \Illuminate\Support\Facades\Schema::hasTable('invoices') ? \App\Models\Invoice::count() : 0;
-    $totalRevenue = \Illuminate\Support\Facades\Schema::hasTable('invoices') ? \App\Models\Invoice::sum('total') : 0;
-    $recentInvoices = \Illuminate\Support\Facades\Schema::hasTable('invoices') ? \App\Models\Invoice::with('client')->latest()->take(5)->get() : collect();
+    $totalClients = \App\Models\Client::withoutGlobalScopes()->count();
+    $totalInvoices = \App\Models\Invoice::withoutGlobalScopes()->count();
+    $totalRevenue = \App\Models\Invoice::withoutGlobalScopes()->sum('total');
+    $recentInvoices = \App\Models\Invoice::withoutGlobalScopes()->with('client')->latest()->take(5)->get();
 
     return view('dashboard', compact('totalClients', 'totalInvoices', 'totalRevenue', 'recentInvoices'));
 })->name('dashboard');
 
 // Client Routes - Restricted to index only
 Route::get('clients', function() {
-    if (!\Illuminate\Support\Facades\Schema::hasTable('clients')) {
-        return view('clients.index', ['clients' => collect()]);
-    }
     return app(ClientController::class)->index();
 })->name('clients.index');
 

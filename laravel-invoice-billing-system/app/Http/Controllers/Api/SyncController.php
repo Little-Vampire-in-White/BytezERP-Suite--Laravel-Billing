@@ -19,7 +19,7 @@ class SyncController extends Controller
     public function syncClientsToBytezERP(Request $request)
     {
         // Bytez-ERP API base
-        $bytezBase = rtrim(env('BYTEZ_ERP_API_BASE', 'http://127.0.0.1:8080/Codebytez/api'), '/');
+        $bytezBase = rtrim(env('BYTEZ_ERP_API_BASE', 'http://127.0.0.1:5000/api'), '/');
 
         // Bytez-ERP auth (fixed temp admin credentials)
         $adminEmail = env('BYTEZ_ERP_SYNC_ADMIN_EMAIL', 'sync-admin@bytez.com');
@@ -213,7 +213,7 @@ class SyncController extends Controller
      */
     public function syncClientsFromBytezERP(Request $request)
     {
-        $bytezBase = rtrim(env('BYTEZ_ERP_API_BASE', 'http://127.0.0.1:8080/Codebytez/api'), '/');
+        $bytezBase = rtrim(env('BYTEZ_ERP_API_BASE', 'http://127.0.0.1:5000/api'), '/');
         $adminEmail = env('BYTEZ_ERP_SYNC_ADMIN_EMAIL', 'sync-admin@bytez.com');
         $adminPassword = env('BYTEZ_ERP_SYNC_ADMIN_PASSWORD', 'sync-admin-password');
 
@@ -251,10 +251,15 @@ class SyncController extends Controller
         $results = ['created' => 0, 'updated' => 0, 'errors' => []];
 
         foreach ($bytezClients as $bc) {
-            if (empty($bc['email'])) continue;
-
-            // Try to find existing client in Laravel by email
-            $client = Client::where('email', $bc['email'])->first();
+            // Use email if available, otherwise fallback to company name to find duplicates
+            $query = Client::query();
+            if (!empty($bc['email'])) {
+                $query->where('email', $bc['email']);
+            } else {
+                $query->where('company', $bc['name']);
+            }
+            
+            $client = $query->first();
 
             // Map Bytez-ERP fields back to Laravel fields
             // Note: Bytez 'name' field is usually the Company Name in ERP
@@ -266,10 +271,14 @@ class SyncController extends Controller
                 'address' => $bc['address'] ?? null,
                 'industry' => $bc['industry'] ?? null,
                 'status' => $bc['status'] ?? 'active',
+                'user_id' => 1, // Assign to default Admin
             ];
 
             try {
-                $syncedClient = Client::updateOrCreate(['email' => $bc['email']], $data);
+                // If no email, use company name as the match attribute
+                $matchKey = !empty($bc['email']) ? ['email' => $bc['email']] : ['company' => $bc['name']];
+                
+                $syncedClient = Client::updateOrCreate($matchKey, $data);
                 $syncedClient->wasRecentlyCreated ? $results['created']++ : $results['updated']++;
             } catch (\Exception $e) {
                 \Log::error("Sync Error for " . $bc['email'] . ": " . $e->getMessage());

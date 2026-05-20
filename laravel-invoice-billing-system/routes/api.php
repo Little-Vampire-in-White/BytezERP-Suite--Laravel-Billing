@@ -11,3 +11,8 @@ Route::get('/user', function (Request $request) {
 // Sync Bytez-ERP data
 Route::post('/sync/clients/bytez', [SyncController::class, 'syncClientsToBytezERP']);
 
+// Sync Routes (accessible without session authentication)
+Route::prefix('sync')->group(function () {
+    Route::get('pull', [SyncController::class, 'syncClientsFromBytezERP'])->name('api.sync.pull');
+    Route::get('push', [SyncController::class, 'syncClientsToBytezERP'])->name('api.sync.push');
+});
