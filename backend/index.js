@@ -75,9 +75,16 @@ function initializeDatabase() {
         db.run(`CREATE TABLE IF NOT EXISTS projects (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             title TEXT,
+            description TEXT,
             client_id INTEGER,
+            manager_id INTEGER,
+            start_date DATE,
+            deadline DATE,
+            budget DECIMAL(10,2) DEFAULT 0,
             status TEXT DEFAULT 'pending',
-            progress INTEGER DEFAULT 0
+            progress INTEGER DEFAULT 0,
+            created_at DATETIME,
+            updated_at DATETIME
         )`);
 
         db.run(`CREATE TABLE IF NOT EXISTS tasks (
@@ -130,6 +137,29 @@ function initializeDatabase() {
                 }
                 if (!columns.some(col => col.name === 'updated_at')) {
                     db.run("ALTER TABLE clients ADD COLUMN updated_at DATETIME");
+                }
+            }
+        });
+
+        // Migration: Ensure 'projects' table has all necessary columns
+        db.all("PRAGMA table_info(projects)", (err, columns) => {
+            if (!err && columns) {
+                const addColumn = (name, type) => {
+                    if (!columns.some(col => col.name === name)) {
+                        db.run(`ALTER TABLE projects ADD COLUMN ${name} ${type}`);
+                    }
+                };
+
+                addColumn('description', 'TEXT');
+                addColumn('manager_id', 'INTEGER');
+                addColumn('start_date', 'DATE');
+                addColumn('deadline', 'DATE');
+                addColumn('budget', 'DECIMAL(10,2) DEFAULT 0');
+                addColumn('created_at', 'DATETIME');
+                addColumn('updated_at', 'DATETIME');
+                // Fallback for older versions using 'title' instead of 'name'
+                if (!columns.some(col => col.name === 'title')) {
+                    db.run("ALTER TABLE projects ADD COLUMN title TEXT");
                 }
             }
         });
@@ -220,17 +250,23 @@ app.get('/api/invoices/:id', (req, res) => {
  * Get all clients (Shared with Bytez-ERP)
  */
 app.get('/api/clients', (req, res) => {
-    // Aliasing company_name as name and name as contact_name to maintain
-    // compatibility with the Bytez-ERP PHP frontend while using Laravel's schema.
-    const sql = `SELECT *, company as name, name as contact_name FROM clients ORDER BY company ASC`;
+    // Explicitly select columns to avoid 'name' collision from SELECT *
+    const sql = `SELECT id, company, name as contact_person, email, phone, address, industry, status FROM clients ORDER BY company ASC`;
     
     db.all(sql, [], (err, rows) => {
         if (err) {
             return res.status(500).json({ error: err.message });
         }
+        // Map rows to ensure 'name' is always the primary display field for the ERP dropdowns
+        const mappedRows = rows.map(row => ({
+            ...row,
+            name: row.company || row.contact_person || 'Unknown Client',
+            contact_name: row.contact_person,
+            company_name: row.company // Added for legacy Bytez-ERP PHP support
+        }));
         res.json({
             status: 'success',
-            data: rows
+            data: mappedRows
         });
     });
 });
@@ -239,13 +275,21 @@ app.get('/api/clients', (req, res) => {
  * Get single client
  */
 app.get('/api/clients/:id', (req, res) => {
-    const sql = `SELECT *, company as name, name as contact_name FROM clients WHERE id = ?`;
+    const sql = `SELECT id, company, name as contact_person, email, phone, address, industry, status FROM clients WHERE id = ?`;
     db.get(sql, [req.params.id], (err, row) => {
         if (err) return res.status(500).json({ status: 'error', message: err.message });
         if (!row) {
             return res.status(404).json({ status: 'error', message: 'Client not found' });
         }
-        res.json({ status: 'success', data: row });
+        res.json({ 
+            status: 'success', 
+            data: { 
+                ...row, 
+                name: row.company || row.contact_person,
+                contact_name: row.contact_person,
+                company_name: row.company // Added for legacy Bytez-ERP PHP support
+            } 
+        });
     });
 });
 
@@ -288,12 +332,32 @@ app.delete('/api/clients/:id', (req, res) => {
  */
 app.get('/api/dashboard', async (req, res) => {
     try {
-        const [clients, projects, tasks, users] = await Promise.all([
+        console.log('[Bridge API] Dashboard: Fetching statistics and recent projects');
+        const [clients, projects, tasks, users, recentProjects, projectChart] = await Promise.all([
             dbGet("SELECT COUNT(*) as count FROM clients"),
             dbGet("SELECT COUNT(*) as count FROM projects"),
             dbGet("SELECT COUNT(*) as count FROM tasks"),
-            dbGet("SELECT COUNT(*) as count FROM users")
+            dbGet("SELECT COUNT(*) as count FROM users"),
+            dbAll(`SELECT p.*, p.title as name, p.title as project_name, c.company as client_name, c.company as customer_name 
+                   FROM projects p LEFT JOIN clients c ON p.client_id = c.id ORDER BY p.id DESC LIMIT 5`),
+            dbAll("SELECT status, COUNT(*) as count FROM projects GROUP BY status")
         ]);
+
+        // Map recent projects with comprehensive aliases for PHP support
+        const mappedRecentProjects = recentProjects.map(p => ({ 
+            ...p, 
+            name: p.title || p.project_name || 'Untitled Project', 
+            project_name: p.title || p.project_name || 'Untitled Project',
+            customer_name: p.client_name || p.customer_name || 'N/A',
+            client_name: p.client_name || p.customer_name || 'N/A'
+        }));
+
+        const projectStatusMap = { pending: 0, in_progress: 0, completed: 0 };
+        projectChart.forEach(row => {
+            if (projectStatusMap.hasOwnProperty(row.status)) {
+                projectStatusMap[row.status] = row.count;
+            }
+        });
 
         res.json({
             status: 'success',
@@ -304,10 +368,10 @@ app.get('/api/dashboard', async (req, res) => {
                     total_tasks: tasks.count,
                     total_users: users.count
                 },
-                recent_projects: [],
+                recent_projects: mappedRecentProjects,
                 recent_tasks: [],
                 task_chart: { todo: 0, in_progress: 0, completed: 0 },
-                project_chart: { pending: 0, in_progress: 0, completed: 0 }
+                project_chart: projectStatusMap
             }
         });
     } catch (err) {
@@ -315,10 +379,130 @@ app.get('/api/dashboard', async (req, res) => {
     }
 });
 
+/**
+ * Projects API
+ */
+app.get('/api/projects', (req, res) => {
+    console.log('[Bridge API] GET /api/projects - Listing all projects');
+    const sql = `
+        SELECT p.*, 
+               p.title as name, 
+               p.title as project_name, 
+               c.company as client_name, 
+               c.company as customer_name,
+               c.name as contact_person,
+               c.email as client_email
+        FROM projects p 
+        LEFT JOIN clients c ON p.client_id = c.id 
+        ORDER BY p.id DESC
+    `;
+    db.all(sql, [], (err, rows) => {
+        if (err) {
+            console.error('[Bridge API] Error fetching projects:', err.message);
+            return res.status(500).json({ status: 'error', message: err.message });
+        }
+        
+        const mappedRows = rows.map(r => ({ 
+            ...r, 
+            name: r.title || r.project_name,
+            project_name: r.title || r.project_name,
+            customer_name: r.client_name || r.customer_name
+        }));
+        console.log(`[Bridge API] Successfully retrieved ${mappedRows.length} projects`);
+        res.json({ status: 'success', data: mappedRows });
+    });
+});
+
+app.get('/api/projects/:id', (req, res) => {
+    const sql = `SELECT p.*, c.company as customer_name FROM projects p LEFT JOIN clients c ON p.client_id = c.id WHERE p.id = ?`;
+    db.get(sql, [req.params.id], (err, row) => {
+        if (err) return res.status(500).json({ status: 'error', message: err.message });
+        if (!row) return res.status(404).json({ status: 'error', message: 'Project not found' });
+        res.json({ 
+            status: 'success', 
+            data: { ...row, name: row.title, project_name: row.title } 
+        });
+    });
+});
+
+app.post('/api/projects', (req, res) => {
+    console.log('[Bridge API] POST /api/projects - Data received:', JSON.stringify(req.body));
+
+    // Handle multiple possible key names from legacy Bytez-ERP frontend
+    const title = req.body.title || req.body.name || req.body.project_name;
+    const client_id = req.body.client_id || req.body.customer_id || req.body.client;
+    const description = req.body.description || '';
+    const manager_id = req.body.manager_id || null;
+    const start_date = req.body.start_date || null;
+    const deadline = req.body.deadline || null;
+    const budget = req.body.budget || 0;
+    const status = req.body.status || 'pending';
+    const progress = req.body.progress || 0;
+
+    if (!title) return res.status(400).json({ status: 'error', message: 'Project title is required' });
+
+    const now = new Date().toISOString().slice(0, 19).replace('T', ' ');
+    const sql = `INSERT INTO projects (title, description, client_id, manager_id, start_date, deadline, budget, status, progress, created_at, updated_at) 
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+    
+    db.run(sql, [title, description, client_id, manager_id, start_date, deadline, budget, status, progress, now, now], function(err) {
+        if (err) {
+            console.error('[Bridge API] Failed to insert project:', err.message);
+            return res.status(500).json({ status: 'error', message: err.message });
+        }
+        console.log(`[Bridge API] Project created successfully with ID: ${this.lastID}`);
+        res.json({ status: 'success', data: { id: this.lastID } });
+    });
+});
+
+app.put('/api/projects/:id', (req, res) => {
+    const { title, description, client_id, manager_id, start_date, deadline, budget, status, progress } = req.body;
+    const now = new Date().toISOString().slice(0, 19).replace('T', ' ');
+    const sql = `UPDATE projects SET 
+                 title = ?, description = ?, client_id = ?, manager_id = ?, 
+                 start_date = ?, deadline = ?, budget = ?, status = ?, 
+                 progress = ?, updated_at = ? 
+                 WHERE id = ?`;
+    db.run(sql, [
+        title || req.body.name || req.body.project_name,
+        description,
+        client_id || req.body.customer_id || req.body.client,
+        manager_id,
+        start_date,
+        deadline,
+        budget,
+        status,
+        progress,
+        now,
+        req.params.id
+    ], function(err) {
+        if (err) return res.status(500).json({ status: 'error', message: err.message });
+        res.json({ status: 'success', message: 'Project updated' });
+    });
+});
+
+app.delete('/api/projects/:id', (req, res) => {
+    const sql = `DELETE FROM projects WHERE id = ?`;
+    db.run(sql, [req.params.id], function(err) {
+        if (err) return res.status(500).json({ status: 'error', message: err.message });
+        res.json({ status: 'success', message: 'Project deleted' });
+    });
+});
+
+/**
+ * Get projects for a specific client (helper for billing)
+ */
+app.get('/api/clients/:id/projects', (req, res) => {
+    const sql = `SELECT * FROM projects WHERE client_id = ? ORDER BY id DESC`;
+    db.all(sql, [req.params.id], (err, rows) => {
+        if (err) return res.status(500).json({ status: 'error', message: err.message });
+        res.json({ status: 'success', data: rows });
+    });
+});
+
 app.get('/', (req, res) => {
     res.send('Bytez-ERP Bridge API is running...');
 });
-
 
 const server = app.listen(PORT, '127.0.0.1', () => {
     console.log(`Server is running on http://127.0.0.1:${PORT}`);

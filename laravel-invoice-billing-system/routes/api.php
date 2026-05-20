@@ -15,4 +15,5 @@ Route::post('/sync/clients/bytez', [SyncController::class, 'syncClientsToBytezER
 Route::prefix('sync')->group(function () {
     Route::get('pull', [SyncController::class, 'syncClientsFromBytezERP'])->name('api.sync.pull');
     Route::get('push', [SyncController::class, 'syncClientsToBytezERP'])->name('api.sync.push');
+    Route::get('client-projects/{id}', [SyncController::class, 'getClientProjects'])->name('api.sync.projects');
 });

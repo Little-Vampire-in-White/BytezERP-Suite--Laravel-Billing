@@ -99,13 +99,20 @@ function runCommand(phpBinary, cwd, args, env, name) {
 async function runLaravelSetup(phpBinary, laravelDir, sharedDbPath, sharedEnv) {
     logToFile('Starting Laravel setup sequence...', 'Laravel-Setup');
 
-    // Ensure bootstrap/cache and storage/framework/cache directories exist and are writable
+    // Ensure all required Laravel directories exist and are writable
     const bootstrapCacheDir = path.join(laravelDir, 'bootstrap', 'cache');
-    const storageFrameworkCacheDir = path.join(laravelDir, 'storage', 'framework', 'cache');
-    const storageFrameworkViewsDir = path.join(laravelDir, 'storage', 'framework', 'views');
-    const storageLogsDir = path.join(laravelDir, 'storage', 'logs');
+    const storageDir = path.join(laravelDir, 'storage');
+    const frameworkDir = path.join(storageDir, 'framework');
+    
+    const dirsToCreate = [
+        bootstrapCacheDir,
+        path.join(frameworkDir, 'cache'),
+        path.join(frameworkDir, 'sessions'),
+        path.join(frameworkDir, 'views'),
+        path.join(storageDir, 'logs')
+    ];
 
-    [bootstrapCacheDir, storageFrameworkCacheDir, storageFrameworkViewsDir, storageLogsDir].forEach(dir => {
+    dirsToCreate.forEach(dir => {
         if (!fs.existsSync(dir)) {
             try {
                 fs.mkdirSync(dir, { recursive: true });
@@ -147,8 +154,7 @@ function createWindow() {
 
     const laravelDir = getServicePath(process.env.LARAVEL_INVOICE_PATH, '../laravel-invoice-billing-system');
     const userDataPath = app.getPath('userData');
-    const sharedDbPathRaw = path.join(userDataPath, 'database.sqlite');
-    const sharedDbPath = sharedDbPathRaw.replace(/\\/g, '/');
+    const sharedDbPath = path.join(userDataPath, 'database.sqlite');
 
     // Ensure shared DB exists
     if (!fs.existsSync(sharedDbPath)) {
@@ -162,7 +168,6 @@ function createWindow() {
     // Shared environment for all processes
     const sharedEnv = {
         ...process.env,
-        APP_KEY: process.env.APP_KEY, // Ensure APP_KEY propagates
         DB_CONNECTION: 'sqlite',
         DB_DATABASE: sharedDbPath,
         DB_PATH: sharedDbPath,

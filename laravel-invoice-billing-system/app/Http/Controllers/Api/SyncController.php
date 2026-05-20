@@ -248,8 +248,9 @@ class SyncController extends Controller
         curl_close($ch);
 
         $bytezClients = $listData['data'] ?? [];
-        $results = ['created' => 0, 'updated' => 0, 'errors' => []];
+        $results = ['created' => 0, 'updated' => 0, 'deleted' => 0, 'errors' => []];
 
+        $syncedIds = [];
         foreach ($bytezClients as $bc) {
             // Use email if available, otherwise fallback to company name to find duplicates
             $query = Client::query();
@@ -259,13 +260,13 @@ class SyncController extends Controller
                 $query->where('company', $bc['name']);
             }
             
-            $client = $query->first();
+            $existingClient = $query->first();
 
             // Map Bytez-ERP fields back to Laravel fields
             // Note: Bytez 'name' field is usually the Company Name in ERP
             $data = [
                 'name' => $bc['contact_name'] ?? $bc['name'], 
-                'company' => $bc['name'], 
+                'company' => $bc['company'] ?? ($bc['name'] ?? 'N/A'), 
                 'email' => $bc['email'],
                 'phone' => $bc['phone'] ?? null,
                 'address' => $bc['address'] ?? null,
@@ -279,6 +280,7 @@ class SyncController extends Controller
                 $matchKey = !empty($bc['email']) ? ['email' => $bc['email']] : ['company' => $bc['name']];
                 
                 $syncedClient = Client::updateOrCreate($matchKey, $data);
+                $syncedIds[] = $syncedClient->id;
                 $syncedClient->wasRecentlyCreated ? $results['created']++ : $results['updated']++;
             } catch (\Exception $e) {
                 \Log::error("Sync Error for " . $bc['email'] . ": " . $e->getMessage());
@@ -286,6 +288,57 @@ class SyncController extends Controller
             }
         }
 
+        // Mirror deletions: Remove clients in Laravel that no longer exist in Bytez-ERP
+        // We only target clients belonging to User ID 1 (the Admin/Sync user)
+        $results['deleted'] = Client::where('user_id', 1)
+            ->whereNotIn('id', $syncedIds)
+            ->delete();
+
         return response()->json(['status' => 'success', 'data' => $results]);
+    }
+
+    /**
+     * Get projects for a specific client from Bytez-ERP.
+     */
+    public function getClientProjects($clientId)
+    {
+        $bytezBase = rtrim(env('BYTEZ_ERP_API_BASE', 'http://127.0.0.1:5000/api'), '/');
+        $adminEmail = env('BYTEZ_ERP_SYNC_ADMIN_EMAIL', 'sync-admin@bytez.com');
+        $adminPassword = env('BYTEZ_ERP_SYNC_ADMIN_PASSWORD', 'sync-admin-password');
+
+        // Login to Bytez-ERP to get a token
+        $loginUrl = $bytezBase . '/?url=auth';
+        $ch = curl_init($loginUrl);
+        curl_setopt_array($ch, [
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_POST => true,
+            CURLOPT_HTTPHEADER => ['Content-Type: application/json'],
+            CURLOPT_POSTFIELDS => json_encode(['email' => $adminEmail, 'password' => $adminPassword]),
+            CURLOPT_TIMEOUT => 15,
+        ]);
+        $loginResp = json_decode(curl_exec($ch), true);
+        $loginCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        curl_close($ch);
+
+        if ($loginCode !== 200 || empty($loginResp['data']['token'])) {
+            return response()->json(['status' => 'error', 'message' => 'Auth failed'], 401);
+        }
+        $token = $loginResp['data']['token'];
+
+        // Fetch projects for client from Bridge API
+        $listUrl = $bytezBase . '/clients/' . $clientId . '/projects';
+        $ch = curl_init($listUrl);
+        curl_setopt_array($ch, [
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_HTTPHEADER => [
+                'Authorization: Bearer ' . $token,
+                'Content-Type: application/json',
+            ],
+            CURLOPT_TIMEOUT => 15,
+        ]);
+        $listResp = curl_exec($ch);
+        curl_close($ch);
+
+        return response($listResp)->header('Content-Type', 'application/json');
     }
 }
