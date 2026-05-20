@@ -59,11 +59,6 @@ cd backend
 npm install
 ```
 
-**Desktop (Electron):**
-```bash
-cd ../desktop
-npm install
-```
 
 **Billing System (Laravel):**
 ```bash
@@ -97,4 +92,4 @@ In production, the application captures all service logs (PHP, Node, Electron) i
 `%AppData%\bytez-desktop\app-logs.txt`
 
 ## 👨‍💻 Author
-**Mark J** - *Initial Work*
+**Neko aka Kokofish** - *Initial Work*
