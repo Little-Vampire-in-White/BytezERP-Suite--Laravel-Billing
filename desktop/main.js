@@ -72,28 +72,67 @@ function checkServerReady(port, serviceName, callback, timeout = 20000) {
     }, 500);
 }
 
-function runMigration(phpBinary, laravelDir, sharedDbPath) {
-    return new Promise((resolve) => {
-        logToFile('Running database migrations...');
-        const migration = spawn(phpBinary, ['artisan', 'migrate', '--force'], {
-            cwd: laravelDir,
-            env: { 
-                ...process.env,
-                DB_CONNECTION: 'sqlite',
-                DB_DATABASE: sharedDbPath,
-                APP_ENV: 'local'
-            },
-            shell: true
-        });
+function runCommand(phpBinary, cwd, args, env, name) {
+    return new Promise((resolve, reject) => {
+        logToFile(`Running command: ${phpBinary} ${args.join(' ')} in ${cwd}`, `CMD-${name}`);
+        const proc = spawn(phpBinary, args, { cwd, env, shell: true });
 
-        migration.stdout.on('data', (data) => logToFile(data, 'Laravel-Migrate'));
-        migration.stderr.on('data', (data) => logToFile(data, 'Laravel-Migrate-ERR'));
-        
-        migration.on('close', (code) => {
-            logToFile(`Migration process exited with code ${code}`);
-            resolve();
+        proc.stdout.on('data', (data) => logToFile(data.toString(), `CMD-${name}-STDOUT`));
+        proc.stderr.on('data', (data) => logToFile(data.toString(), `CMD-${name}-STDERR`));
+
+        proc.on('close', (code) => {
+            if (code === 0) {
+                logToFile(`Command ${name} exited successfully.`, `CMD-${name}`);
+                resolve();
+            } else {
+                logToFile(`Command ${name} exited with code ${code}.`, `CMD-${name}-ERROR`);
+                reject(new Error(`Command ${name} failed with code ${code}`));
+            }
+        });
+        proc.on('error', (err) => {
+            logToFile(`Command ${name} failed to spawn: ${err.message}`, `CMD-${name}-ERROR`);
+            reject(err);
         });
     });
+}
+
+async function runLaravelSetup(phpBinary, laravelDir, sharedDbPath, sharedEnv) {
+    logToFile('Starting Laravel setup sequence...', 'Laravel-Setup');
+
+    // Ensure bootstrap/cache and storage/framework/cache directories exist and are writable
+    const bootstrapCacheDir = path.join(laravelDir, 'bootstrap', 'cache');
+    const storageFrameworkCacheDir = path.join(laravelDir, 'storage', 'framework', 'cache');
+    const storageFrameworkViewsDir = path.join(laravelDir, 'storage', 'framework', 'views');
+    const storageLogsDir = path.join(laravelDir, 'storage', 'logs');
+
+    [bootstrapCacheDir, storageFrameworkCacheDir, storageFrameworkViewsDir, storageLogsDir].forEach(dir => {
+        if (!fs.existsSync(dir)) {
+            try {
+                fs.mkdirSync(dir, { recursive: true });
+                logToFile(`Created directory: ${dir}`, 'Laravel-Setup');
+            } catch (e) {
+                logToFile(`Failed to create directory ${dir}: ${e.message}`, 'Laravel-Setup-ERROR');
+                dialog.showErrorBox("Laravel Setup Error", `Failed to create writable directory: ${dir}\n\nError: ${e.message}`);
+                throw e; // Re-throw to stop the process
+            }
+        }
+    });
+
+    try {
+        // Clear config cache first so DB_DATABASE env is respected
+        await runCommand(phpBinary, laravelDir, ['artisan', 'config:clear'], sharedEnv, 'config:clear');
+        await runCommand(phpBinary, laravelDir, ['artisan', 'cache:clear'], sharedEnv, 'cache:clear');
+        await runCommand(phpBinary, laravelDir, ['artisan', 'view:clear'], sharedEnv, 'view:clear');
+
+        // Run migrations
+        await runCommand(phpBinary, laravelDir, ['artisan', 'migrate', '--force'], sharedEnv, 'migrate');
+
+        logToFile('Laravel setup sequence completed successfully.', 'Laravel-Setup');
+    } catch (error) {
+        logToFile(`Laravel setup sequence failed: ${error.message}`, 'Laravel-Setup-ERROR');
+        dialog.showErrorBox("Laravel Setup Failed", `One or more Laravel setup commands failed. Check app-logs.txt for details.\n\nError: ${error.message}`);
+        throw error; // Propagate the error
+    }
 }
 
 function createWindow() {
@@ -108,7 +147,8 @@ function createWindow() {
 
     const laravelDir = getServicePath(process.env.LARAVEL_INVOICE_PATH, '../laravel-invoice-billing-system');
     const userDataPath = app.getPath('userData');
-    const sharedDbPath = path.join(userDataPath, 'database.sqlite');
+    const sharedDbPathRaw = path.join(userDataPath, 'database.sqlite');
+    const sharedDbPath = sharedDbPathRaw.replace(/\\/g, '/');
 
     // Ensure shared DB exists
     if (!fs.existsSync(sharedDbPath)) {
@@ -122,6 +162,7 @@ function createWindow() {
     // Shared environment for all processes
     const sharedEnv = {
         ...process.env,
+        APP_KEY: process.env.APP_KEY, // Ensure APP_KEY propagates
         DB_CONNECTION: 'sqlite',
         DB_DATABASE: sharedDbPath,
         DB_PATH: sharedDbPath,
@@ -137,9 +178,10 @@ function createWindow() {
         stdio: 'pipe'
     });
     phpServer.stdout.on('data', (data) => logToFile(data, 'Bytez-ERP-PHP'));
+    phpServer.stderr.on('data', (data) => logToFile(data, 'Bytez-ERP-PHP-ERR'));
 
-    // Run migration THEN start Laravel and Node
-    runMigration(phpBinary, laravelDir, sharedDbPath).then(() => {
+    // Run Setup (Cache Clear + Migrate) THEN start Laravel and Node
+    runLaravelSetup(phpBinary, laravelDir, sharedDbPath, sharedEnv).then(() => {
         laravelPhpServer = spawn(phpBinary, [
             'artisan', 'serve',
             `--port=${process.env.LARAVEL_INVOICE_PORT || 8000}`,
@@ -151,93 +193,98 @@ function createWindow() {
             stdio: 'pipe'
         });
         laravelPhpServer.stdout.on('data', (data) => logToFile(data, 'Laravel-PHP'));
-    });
+        laravelPhpServer.stderr.on('data', (data) => logToFile(data, 'Laravel-PHP-ERR'));
 
-    // Start the Node.js Bridge API
-    const backendDir = getServicePath(process.env.NODE_BACKEND_PATH, '../backend');
-    const backendScript = path.join(backendDir, 'index.js');
+        // Start the Node.js Bridge API
+        const backendDir = getServicePath(process.env.NODE_BACKEND_PATH, '../backend');
+        const backendScript = path.join(backendDir, 'index.js');
 
-    if (!fs.existsSync(backendDir)) {
-        dialog.showErrorBox("Missing Backend Folder", `Node.js backend folder not found at: ${backendDir}`);
-        return; // Prevent further execution if critical folder is missing
-    }
-    if (!fs.existsSync(backendScript)) {
-        dialog.showErrorBox("Missing Backend Script", `Node.js backend script not found at: ${backendScript}`);
-        return; // Prevent further execution if critical script is missing
-    }
-
-    // Prepare environment. Fix absolute path leaks from development .env
-    const backendEnv = { ...process.env };
-    if (app.isPackaged) {
-        backendEnv.ELECTRON_RUN_AS_NODE = '1';
-        // Tell the backend where to find the bundled modules
-        const appPath = app.getAppPath();
-        const asarModules = path.join(appPath, 'node_modules');
-        const unpackedModules = path.join(appPath + '.unpacked', 'node_modules');
-        backendEnv.NODE_PATH = asarModules + path.delimiter + unpackedModules;
-    }
-
-    nodeBackend = fork(backendScript, [], {
-        execPath: process.execPath, // Explicitly use Electron's binary for the fork
-        cwd: backendDir,
-        env: {
-            ...backendEnv,
-            PORT: backendEnv.NODE_BACKEND_PORT || 5000,
-            DB_PATH: sharedDbPath // Force Node to use the Laravel DB file
-        },
-        stdio: 'pipe' // Simplifies child process management in some Electron versions
-    });
-
-    nodeBackend.stdout.on('data', (data) => logToFile(data, 'Node-Backend'));
-    nodeBackend.stderr.on('data', (data) => {
-        const errString = data.toString();
-        logToFile(errString, 'Node-Backend-ERR');
-        // Show actual crash errors in a dialog so you can debug production
-        if (app.isPackaged && (errString.includes('Error:') || errString.includes('Exception'))) {
-            dialog.showErrorBox("Backend Startup Error", errString);
+        if (!fs.existsSync(backendDir)) {
+            dialog.showErrorBox("Missing Backend Folder", `Node.js backend folder not found at: ${backendDir}`);
+            return; // Prevent further execution if critical folder is missing
         }
-    });
+        if (!fs.existsSync(backendScript)) {
+            dialog.showErrorBox("Missing Backend Script", `Node.js backend script not found at: ${backendScript}`);
+            return; // Prevent further execution if critical script is missing
+        }
 
-    nodeBackend.on('error', (err) => {
+        // Prepare environment. Fix absolute path leaks from development .env
+        const backendEnv = { ...sharedEnv }; // Use sharedEnv here
         if (app.isPackaged) {
-            dialog.showErrorBox("Backend Error", `Failed to start Node.js backend: ${err.message}`);
+            backendEnv.ELECTRON_RUN_AS_NODE = '1';
+            // Tell the backend where to find the bundled modules
+            const appPath = app.getAppPath();
+            const asarModules = path.join(appPath, 'node_modules');
+            const unpackedModules = path.join(appPath + '.unpacked', 'node_modules');
+            backendEnv.NODE_PATH = asarModules + path.delimiter + unpackedModules;
         }
-    });
 
-    // 3. Create the browser window
-    mainWindow = new BrowserWindow({
-        width: 1280,
-        height: 900,
-        title: "Bytez ERP System",
-        autoHideMenuBar: true,
-        webPreferences: {
-            nodeIntegration: false,
-            contextIsolation: true
+        nodeBackend = fork(backendScript, [], {
+            execPath: process.execPath, // Explicitly use Electron's binary for the fork
+            cwd: backendDir,
+            env: {
+                ...backendEnv,
+                PORT: backendEnv.NODE_BACKEND_PORT || 5000,
+                DB_PATH: sharedDbPath // Force Node to use the Laravel DB file
+            },
+            stdio: 'pipe' // Simplifies child process management in some Electron versions
+        });
+
+        nodeBackend.stdout.on('data', (data) => logToFile(data, 'Node-Backend'));
+        nodeBackend.stderr.on('data', (data) => {
+            const errString = data.toString();
+            logToFile(errString, 'Node-Backend-ERR');
+            // Show actual crash errors in a dialog so you can debug production
+            if (app.isPackaged && (errString.includes('Error:') || errString.includes('Exception'))) {
+                dialog.showErrorBox("Backend Startup Error", errString);
+            }
+        });
+
+        nodeBackend.on('error', (err) => {
+            if (app.isPackaged) {
+                dialog.showErrorBox("Backend Error", `Failed to start Node.js backend: ${err.message}`);
+            }
+        });
+
+        // 3. Create the browser window
+        mainWindow = new BrowserWindow({
+            width: 1280,
+            height: 900,
+            title: "Bytez ERP System",
+            autoHideMenuBar: true,
+            webPreferences: {
+                nodeIntegration: false,
+                contextIsolation: true
+            }
+        });
+
+        // Open DevTools automatically in development only
+        if (!app.isPackaged) {
+            mainWindow.webContents.openDevTools();
         }
-    });
 
-    // Open DevTools automatically in development only
-    if (!app.isPackaged) {
-        mainWindow.webContents.openDevTools();
-    }
+        // Wait for the primary ERP server to be ready before loading the URL
+        const erpPort = process.env.BYTEZ_ERP_PORT || 8080;
+        const backendPort = process.env.NODE_BACKEND_PORT || 5000;
 
-    // Wait for the primary ERP server to be ready before loading the URL
-    const erpPort = process.env.BYTEZ_ERP_PORT || 8080;
-    const backendPort = process.env.NODE_BACKEND_PORT || 5000;
-
-    checkServerReady(erpPort, "Bytez-ERP PHP Server", async () => {
-        checkServerReady(backendPort, "Node.js Bridge API", async () => {
-            // Clear storage data to prevent redirect loops caused by stale sessions or cookies
-            await session.defaultSession.clearStorageData();
-            const startUrl = `http://127.0.0.1:${erpPort}/Codebytez/auth/login`;
-            mainWindow.loadURL(startUrl).catch(err => {
-                console.error("Failed to load URL:", err);
+        checkServerReady(erpPort, "Bytez-ERP PHP Server", async () => {
+            checkServerReady(backendPort, "Node.js Bridge API", async () => {
+                // Clear storage data to prevent redirect loops caused by stale sessions or cookies
+                await session.defaultSession.clearStorageData();
+                const startUrl = `http://127.0.0.1:${erpPort}/Codebytez/auth/login`;
+                mainWindow.loadURL(startUrl).catch(err => {
+                    console.error("Failed to load URL:", err);
+                });
             });
         });
-    });
 
-    mainWindow.on('closed', () => {
-        mainWindow = null;
+        mainWindow.on('closed', () => {
+            mainWindow = null;
+        });
+    }).catch(error => {
+        logToFile(`Critical Laravel setup failed, application cannot proceed.`, 'CRITICAL-ERROR');
+        // The error box is already shown by runLaravelSetup, but ensure app doesn't just hang.
+        app.quit();
     });
 }
 
